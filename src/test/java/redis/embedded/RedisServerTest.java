@@ -4,6 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
+
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import redis.clients.jedis.Jedis;
@@ -12,10 +16,20 @@ import redis.clients.jedis.JedisPool;
 public class RedisServerTest {
 
 	private RedisServer redisServer;
+
+	@Before
+	public void beforeMethod() throws IOException {
+		redisServer = new RedisServer(6379);
+	}
+
+	@After
+	public void afterMethod() {
+		if(redisServer.isActive())
+			redisServer.stop();
+	}
 	
 	@Test(timeout = 1500L)
 	public void testSimpleRun() throws Exception {
-		redisServer = new RedisServer(6379);
 		redisServer.start();
 		Thread.sleep(1000L);
 		redisServer.stop();
@@ -23,18 +37,12 @@ public class RedisServerTest {
 	
 	@Test(expected = RuntimeException.class)
 	public void shouldNotAllowMultipleRunsWithoutStop() throws Exception {
-		try {
-			redisServer = new RedisServer(6379);
-			redisServer.start();
-			redisServer.start();
-		} finally {
-			redisServer.stop();
-		}
+		redisServer.start();
+		redisServer.start();
 	}
 	
 	@Test
 	public void shouldAllowSubsequentRuns() throws Exception {
-		redisServer = new RedisServer(6379);
 		redisServer.start();
 		redisServer.stop();
 		
@@ -49,7 +57,6 @@ public class RedisServerTest {
 	
 	@Test
 	public void testSimpleOperationsAfterRun() throws Exception {
-		redisServer = new RedisServer(6379);
 		redisServer.start();
 		
 		JedisPool pool = null;
@@ -66,27 +73,22 @@ public class RedisServerTest {
 		} finally {
 			if (jedis != null)
 				pool.returnResource(jedis);
-			redisServer.stop();
 		}
 	}
 
     @Test
     public void shouldIndicateInactiveBeforeStart() throws Exception {
-        redisServer = new RedisServer(6379);
         assertFalse(redisServer.isActive());
     }
 
     @Test
     public void shouldIndicateActiveAfterStart() throws Exception {
-        redisServer = new RedisServer(6379);
         redisServer.start();
         assertTrue(redisServer.isActive());
-        redisServer.stop();
     }
 
     @Test
     public void shouldIndicateInactiveAfterStop() throws Exception {
-        redisServer = new RedisServer(6379);
         redisServer.start();
         redisServer.stop();
         assertFalse(redisServer.isActive());
