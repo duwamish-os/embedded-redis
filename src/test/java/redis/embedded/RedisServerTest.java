@@ -5,12 +5,19 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
+
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisCommands;
 import redis.clients.jedis.JedisPool;
 
 public class RedisServerTest {
@@ -92,5 +99,64 @@ public class RedisServerTest {
         redisServer.start();
         redisServer.stop();
         assertFalse(redisServer.isActive());
+    }
+	
+	@Test
+	public void testMasterSlave() throws Exception {
+		redisServer.start();
+
+		RedisServer slaveServer = new RedisServer(redisServer.getPort() + 1).slaveOf(redisServer);
+		slaveServer.start();
+
+		Jedis master = new Jedis("localhost", redisServer.getPort());
+		Jedis slave = new Jedis("localhost", slaveServer.getPort());
+		try {
+
+			master.set("foo", "bar");
+			 assertEquals("bar", master.get("foo"));
+
+			Thread.sleep(3000);
+			 assertEquals("bar", slave.get("foo"));
+			
+			// RedisServerTest.<JedisCommands, String> assertWaitingWithProxy(Predicates.equalTo("bar"), 1000, slave).get("foo");
+			
+			
+		} finally {
+			master.disconnect();
+			slave.disconnect();
+			slaveServer.stop();
+		}
+	}
+
+
+    @java.lang.SuppressWarnings("unchecked")
+    public static <T,V> T assertWaitingWithProxy(final Predicate<V> predicate, final long maxTimeToWait, final T objectToProxy) {
+        final Class<?>[] interfaces = objectToProxy.getClass().getInterfaces();
+        return (T) Proxy.newProxyInstance( Thread.currentThread().getContextClassLoader(),
+                interfaces,
+                new InvocationHandler() {
+                    @Override
+                    public Object invoke(final Object proxy, final Method method, final Object[] args) throws Throwable {
+                        return assertPredicateWaiting(predicate, maxTimeToWait, objectToProxy, method, args);
+                    }
+                } );
+    }
+
+    private static <V> V assertPredicateWaiting(final Predicate<V> predicate, final long maxTimeToWait, final Object obj, final Method method, final Object[] args) throws Exception {
+        final long start = System.currentTimeMillis();
+        while( System.currentTimeMillis() < start + maxTimeToWait ) {
+            @java.lang.SuppressWarnings("unchecked")
+            final V result = (V) method.invoke(obj, args);
+            if ( predicate.apply(result) ) {
+                return result;
+            }
+            try {
+                Thread.sleep( 10 );
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        }
+        throw new AssertionError("Expected not null, actual null.");
     }
 }
