@@ -130,6 +130,12 @@ public class RedisServer {
 	public synchronized void stop() {
 		if (active) {
 			redisProcess.destroy();
+			try {
+				redisProcess.waitFor();
+			} catch (InterruptedException e) {
+				// Restore the interrupted status
+				Thread.currentThread().interrupt();
+			}
 			active = false;
 		}
 	}

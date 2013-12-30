@@ -3,11 +3,13 @@ package redis.embedded;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.net.Socket;
 
 import org.junit.After;
 import org.junit.Before;
@@ -100,6 +102,22 @@ public class RedisServerTest {
         redisServer.stop();
         assertFalse(redisServer.isActive());
     }
+
+	@Test
+	public void socketShouldBeClosedAfterStop() throws Exception {
+		redisServer.start();
+		redisServer.stop();
+		Socket s = null;
+		try {
+			s = new Socket("localhost", redisServer.getPort());
+			fail("RedisServer socket still open.");
+		} catch(IOException e) {
+			// Expected
+		} finally {
+			if(s != null)
+				s.close();
+		}
+	}
 	
 	@Test
 	public void testMasterSlave() throws Exception {
