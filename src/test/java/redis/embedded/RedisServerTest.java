@@ -1,34 +1,53 @@
 package redis.embedded;
 
+import static com.google.common.base.Predicates.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.net.Socket;
+import java.util.Arrays;
+import java.util.Collection;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisCommands;
 import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.exceptions.JedisDataException;
+import redis.embedded.RedisServer.LogLevel;
 
+import com.google.common.base.Function;
+import com.google.common.base.Predicate;
+
+@RunWith(Parameterized.class)
 public class RedisServerTest {
+	
+	@Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.<Object[]> asList(new Object[][] { { true }, { false } });
+    }
 
+	private final boolean daemonize;
 	private RedisServer redisServer;
+	
+	public RedisServerTest(boolean daemonize) {
+		this.daemonize = daemonize;
+	}
 
 	@Before
 	public void beforeMethod() throws IOException {
-		redisServer = new RedisServer(6379);
+		// new File("/opt/redis-2.8.3/src/redis-server"), 
+		System.out.println("*** Starting with daemonize " + daemonize);
+		redisServer = new RedisServer(new File("/opt/redis-2.8.3/src/redis-server"), 6379).daemonize(daemonize).withLogLevel(LogLevel.VERBOSE);
 	}
 
 	@After
@@ -37,8 +56,9 @@ public class RedisServerTest {
 			redisServer.stop();
 	}
 	
-	@Test(timeout = 1500L)
+	@Test(timeout = 11500L)
 	public void testSimpleRun() throws Exception {
+		System.out.println("*** Running with daemonize " + redisServer.isDaemonize());
 		redisServer.start();
 		Thread.sleep(1000L);
 		redisServer.stop();
@@ -121,52 +141,55 @@ public class RedisServerTest {
 	
 	@Test
 	public void testMasterSlave() throws Exception {
-		redisServer.start();
+		redisServer.withLogLevel(LogLevel.DEBUG).start();
 
 		RedisServer slaveServer = new RedisServer(redisServer.getPort() + 1).slaveOf(redisServer);
-		slaveServer.start();
+		slaveServer.withLogLevel(LogLevel.DEBUG).start();
 
 		Jedis master = new Jedis("localhost", redisServer.getPort());
 		Jedis slave = new Jedis("localhost", slaveServer.getPort());
 		try {
-
 			master.set("foo", "bar");
-			 assertEquals("bar", master.get("foo"));
-
-			Thread.sleep(3000);
-			 assertEquals("bar", slave.get("foo"));
-			
-			// RedisServerTest.<JedisCommands, String> assertWaitingWithProxy(Predicates.equalTo("bar"), 1000, slave).get("foo");
-			
-			
+			assertWaiting(1000, slave, get("foo"), equalTo("bar"));
 		} finally {
 			master.disconnect();
 			slave.disconnect();
 			slaveServer.stop();
 		}
 	}
+	
+	@Test(expected = JedisDataException.class)
+	public void slaveShouldRejectWrite() throws Exception {
+		redisServer.withLogLevel(LogLevel.DEBUG).start();
 
+		RedisServer slaveServer = new RedisServer(redisServer.getPort() + 1).slaveOf(redisServer);
+		slaveServer.withLogLevel(LogLevel.DEBUG).start();
 
-    @java.lang.SuppressWarnings("unchecked")
-    public static <T,V> T assertWaitingWithProxy(final Predicate<V> predicate, final long maxTimeToWait, final T objectToProxy) {
-        final Class<?>[] interfaces = objectToProxy.getClass().getInterfaces();
-        return (T) Proxy.newProxyInstance( Thread.currentThread().getContextClassLoader(),
-                interfaces,
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(final Object proxy, final Method method, final Object[] args) throws Throwable {
-                        return assertPredicateWaiting(predicate, maxTimeToWait, objectToProxy, method, args);
-                    }
-                } );
-    }
+		Jedis slave = new Jedis("localhost", slaveServer.getPort());
+		try {
+			slave.set("foo", "bar");
+			fail("Write should be rejected.");
+		} finally {
+			slave.disconnect();
+			slaveServer.stop();
+		}
+	}
+	
+	static Function<JedisCommands, String> get(final String key) {
+		return new Function<JedisCommands, String>() {
+			@Override
+			public String apply(JedisCommands input) {
+				return input.get(key);
+			}
+		};
+	}
 
-    private static <V> V assertPredicateWaiting(final Predicate<V> predicate, final long maxTimeToWait, final Object obj, final Method method, final Object[] args) throws Exception {
+    public static <T,V> void assertWaiting(final long maxTimeToWait, final T obj, final Function<T, V> function, final Predicate<V> predicate) {
         final long start = System.currentTimeMillis();
         while( System.currentTimeMillis() < start + maxTimeToWait ) {
-            @java.lang.SuppressWarnings("unchecked")
-            final V result = (V) method.invoke(obj, args);
+            final V result = function.apply(obj);
             if ( predicate.apply(result) ) {
-                return result;
+                return;
             }
             try {
                 Thread.sleep( 10 );
@@ -177,4 +200,5 @@ public class RedisServerTest {
         }
         throw new AssertionError("Expected not null, actual null.");
     }
+
 }
